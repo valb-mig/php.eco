@@ -19,6 +19,28 @@ namespace Eco;
  *  - A database or external service is unavailable
  *  - An impossible/invariant state is reached (likely a bug)
  *
+ * ----------------------------------------------------------------------------
+ * Pipeline overview
+ * ----------------------------------------------------------------------------
+ *
+ *  Method          Runs when   Alters Result?   Purpose
+ *  --------------- ----------- ---------------- ------------------------------
+ *  then()          ok          no               Side-effect with the value
+ *  orThen()        fail        no               Side-effect with the errors
+ *  transform()     ok          yes — new value  Transform the carried value
+ *  flatMap()       ok          yes — new Result Chain a Result-returning op
+ *  otherwise()     fail        yes — new Result Recover from failure
+ *
+ * ----------------------------------------------------------------------------
+ * Unwrap overview
+ * ----------------------------------------------------------------------------
+ *
+ *  Method              Returns on ok   Returns on fail
+ *  ------------------- --------------- ------------------------------------
+ *  unwrap()            value           throws LogicException
+ *  or($default)        value           $default
+ *  unwrapOrHandle($fn) value           calls $fn(errors), returns null
+ *
  * @template T The type of the successful value
  */
 final class Result
@@ -43,7 +65,12 @@ final class Result
      *
      * Use when the operation produces a meaningful return value.
      *
-     * @param  T    $value
+     * ```php
+     * return Result::ok($user);
+     * return Result::ok(['id' => 1, 'name' => 'Ana']);
+     * ```
+     *
+     * @param  T $value
      * @return self<T>
      */
     public static function ok(mixed $value): self
@@ -54,11 +81,12 @@ final class Result
     /**
      * Creates a successful Result with no value.
      *
-     * Use for operations that succeed without producing a value
-     * (e.g. delete, update, send email).
+     * Use for operations that succeed without producing a value,
+     * such as deletes, updates, or fire-and-forget actions.
      *
      * ```php
-     * function deleteUser(int $id): Result {
+     * function deleteUser(int $id): Result
+     * {
      *     $this->repo->delete($id);
      *     return Result::void();
      * }
@@ -73,7 +101,18 @@ final class Result
 
     /**
      * Creates a failed Result carrying one or more errors.
+     *
      * Plain strings are automatically wrapped in {@see Error::generic()}.
+     * Pass typed {@see Error} instances for richer, machine-readable errors.
+     *
+     * ```php
+     * Result::fail('Something went wrong.');
+     * Result::fail(Error::validation('email', 'Invalid format.'));
+     * Result::fail(
+     *     Error::validation('name',  'Required.'),
+     *     Error::validation('email', 'Invalid format.'),
+     * );
+     * ```
      *
      * @param  string|Error ...$errors
      * @return self<never>
@@ -101,22 +140,8 @@ final class Result
     }
 
     /**
-     * Returns the successful value.
-     *
-     * @throws \LogicException If called on a failed Result.
-     * @return T
-     */
-    public function getValue(): mixed
-    {
-        if ($this->isFail()) {
-            throw new \LogicException('Cannot get value from a failed Result.');
-        }
-
-        return $this->value;
-    }
-
-    /**
      * Returns all errors carried by this Result.
+     * Returns an empty array when the Result is successful.
      *
      * @return Error[]
      */
@@ -127,6 +152,11 @@ final class Result
 
     /**
      * Returns every error message as a plain string array.
+     * Useful for quick serialization or display.
+     *
+     * ```php
+     * $result->getErrorMessages(); // ['Required.', 'Invalid format.']
+     * ```
      *
      * @return string[]
      */
@@ -136,13 +166,49 @@ final class Result
     }
 
     /**
+     * Executes a side-effect with the successful value, without altering it.
+     * Skipped entirely when the Result is a failure.
+     *
+     * Use for logging, caching, or triggering events mid-pipeline
+     * when you do not want to change the carried value:
+     *
+     * ```php
+     * getUserById($id)
+     *     ->then(fn($user) => $logger->info("User loaded: {$user->name}"))
+     *     ->then(fn($user) => $cache->store("user:{$id}", $user))
+     *     ->transform(fn($user) => $user->toArray());
+     * ```
+     *
+     * @param  callable(T): void $fn
+     * @return self<T>
+     */
+    public function then(callable $fn): self
+    {
+        if ($this->isOk()) {
+            $fn($this->value);
+        }
+
+        return $this;
+    }
+
+    /**
      * Transforms the successful value using the given callback.
-     * If this Result is a failure, it is returned unchanged.
+     * Returns a new Result carrying the transformed value.
+     * Skipped entirely when the Result is a failure.
+     *
+     * Unlike {@see flatMap()}, the callback returns a plain value — not a Result.
+     * Use {@see flatMap()} when the transformation itself can fail.
+     *
+     * ```php
+     * getUserById($id)
+     *     ->transform(fn(UserDTO $user) => $user->name)
+     *     ->transform(fn(string $name)  => strtoupper($name));
+     * ```
      *
      * @param  callable(T): mixed $fn
      * @return self
      */
-    public function map(callable $fn): self
+    public function transform(callable $fn): self
     {
         if ($this->isFail()) {
             return $this;
@@ -155,8 +221,18 @@ final class Result
      * Chains an operation that itself returns a Result.
      * Short-circuits on the first failure — subsequent steps are skipped.
      *
+     * Unlike {@see transform()}, the callback must return a Result.
+     * Use this when the next step can also fail.
+     *
      * Use {@see Result::combine()} instead when steps are independent
      * and you want to collect all errors at once.
+     *
+     * ```php
+     * Result::ok($input)
+     *     ->flatMap(fn($input) => validate($input))
+     *     ->flatMap(fn($input) => persist($input))
+     *     ->transform(fn($user) => new UserDTO($user));
+     * ```
      *
      * @param  callable(T): Result $fn
      * @return self
@@ -171,43 +247,22 @@ final class Result
     }
 
     /**
-     * Executes a side-effect on the successful value without altering it.
-     * If this Result is a failure, the callback is skipped.
+     * Executes a side-effect with the errors, without altering the Result.
+     * Skipped entirely when the Result is successful.
      *
-     * Useful for logging, caching, or triggering events mid-pipeline:
+     * The mirror of {@see then()} for the failure path.
+     * Use for logging or observing errors mid-pipeline:
+     *
      * ```php
-     * return parseInput($data)
-     *     ->tap(fn($v) => $cache->store($v))
-     *     ->flatMap(fn($v) => persist($v));
-     * ```
-     *
-     * @param  callable(T): void $fn
-     * @return self<T>
-     */
-    public function tap(callable $fn): self
-    {
-        if ($this->isOk()) {
-            $fn($this->value);
-        }
-
-        return $this;
-    }
-
-    /**
-     * Executes a side-effect callback when this Result is a failure.
-     * The Result itself is returned unchanged, making it safe to use inline.
-     *
-     * Useful for logging without interrupting the pipeline:
-     * ```php
-     * return validate($data)
-     *     ->onFail(fn($errors) => $logger->warning('Validation failed', $errors))
-     *     ->flatMap(fn($data) => process($data));
+     * getUserById($id)
+     *     ->orThen(fn($errors) => $logger->warning('User not found', $errors))
+     *     ->otherwise(fn($errors) => Result::ok(UserDTO::guest()));
      * ```
      *
      * @param  callable(Error[]): void $fn
      * @return self
      */
-    public function onFail(callable $fn): self
+    public function orThen(callable $fn): self
     {
         if ($this->isFail()) {
             $fn($this->errors);
@@ -217,36 +272,42 @@ final class Result
     }
 
     /**
-     * Attempts to recover from a failure by running the given callback.
-     * If this Result is successful, it is returned unchanged.
+     * Attempts to recover from a failure by returning a new Result.
+     * Skipped entirely when the Result is successful.
      *
-     * The callback receives the current errors and must return a new Result —
+     * The callback receives the current errors and must return a Result —
      * either a recovered success or a (possibly different) failure.
      *
+     * The mirror of {@see flatMap()} for the failure path.
+     *
      * ```php
-     * return fetchFromCache($key)
-     *     ->recover(fn($errors) => fetchFromDatabase($key))
-     *     ->recover(fn($errors) => Result::ok($defaultValue));
+     * fetchFromCache($key)
+     *     ->otherwise(fn($errors) => fetchFromDatabase($key))
+     *     ->otherwise(fn($errors) => Result::ok($defaultValue));
      * ```
      *
-     * @param  callable(Error[]): Result<T> $fn
-     * @return self<T>
+     * @param  callable(Error[]): self $fn
+     * @return self
      */
-    public function recover(callable $fn): self
+    public function otherwise(callable $fn): self
     {
-        if ($this->isOk()) {
-            return $this;
+        if ($this->isFail()) {
+            return $fn($this->errors);
         }
 
-        return $fn($this->errors);
+        return $this;
     }
 
     /**
-     * Returns the value directly, or throws if the Result is a failure.
+     * Returns the value, or throws a LogicException if the Result is a failure.
      *
-     * Use only when you are certain the Result is successful (e.g. right after
-     * a {@see Result::combine()} check). Calling this on a failure is a
-     * programming error and will throw a {@see \LogicException}.
+     * Use only when you are certain the Result is successful — for instance,
+     * right after a successful {@see combine()} check. Calling this on a
+     * failure is a programming error.
+     *
+     * ```php
+     * $user = getUserById($id)->unwrap(); // throws if not found
+     * ```
      *
      * @throws \LogicException
      * @return T
@@ -262,31 +323,48 @@ final class Result
     }
 
     /**
+     * Returns the value if successful; otherwise returns the given default.
+     *
+     * Use when failure has an acceptable fallback and no handling is needed.
+     *
+     * ```php
+     * $name = getUserById($id)
+     *     ->transform(fn($user) => $user->name)
+     *     ->or('Anonymous');
+     * ```
+     *
+     * @param  T $default
+     * @return T
+     */
+    public function or(mixed $default): mixed
+    {
+        return $this->isOk() ? $this->value : $default;
+    }
+
+    /**
      * Returns the value if successful; otherwise calls the given callback
      * with the errors and returns null.
      *
-     * The callback is responsible for deciding what happens on failure
-     * (respond with HTTP 422, log, throw, exit, etc.).
-     *
-     * Always call exit/throw inside the callback if you do not want
-     * execution to continue with a null value.
+     * The callback is responsible for deciding what happens on failure —
+     * return an HTTP response, throw, log, redirect, etc.
+     * If execution should not continue with null, always exit inside the callback.
      *
      * ```php
-     * $input = CreateUserInput::create($data)
+     * $user = getUserById($id)
      *     ->unwrapOrHandle(function (array $errors): void {
-     *         http_response_code(422);
+     *         http_response_code(404);
      *         echo json_encode(['errors' => $errors]);
      *         exit;
      *     });
      * ```
      *
-     * @param  callable(Error[]): void $onFail
+     * @param  callable(Error[]): void $fn
      * @return T|null
      */
-    public function unwrapOrHandle(callable $onFail): mixed
+    public function unwrapOrHandle(callable $fn): mixed
     {
         if ($this->isFail()) {
-            $onFail($this->errors);
+            $fn($this->errors);
             return null;
         }
 
@@ -294,28 +372,15 @@ final class Result
     }
 
     /**
-     * Returns the value if successful; otherwise returns the given default.
+     * Returns a ready-made callback for {@see unwrapOrHandle()} that converts
+     * a failed Result into a RuntimeException.
      *
-     * Use when failure has an acceptable fallback and no handling is needed.
+     * Useful when you want to re-enter exception-based error handling,
+     * for example inside a context that already has a global exception handler.
      *
      * ```php
-     * $displayName = parseName($raw)->unwrapOr('Anonymous');
+     * $user = getUserById($id)->unwrapOrHandle(Result::throwOnFail());
      * ```
-     *
-     * @param  T $default
-     * @return T
-     */
-    public function unwrapOr(mixed $default): mixed
-    {
-        return $this->isOk() ? $this->value : $default;
-    }
-
-    /**
-     * Returns a ready-made callback for {@see unwrapOrHandle()} that
-     * throws a RuntimeException with all error messages joined.
-     *
-     * Useful when you want to convert a failed Result into an exception
-     * (e.g. inside a context that already has a global exception handler).
      *
      * @return callable(Error[]): never
      */
@@ -335,24 +400,24 @@ final class Result
      * combine() always evaluates every Result — making it ideal for form
      * validation where you want to show all errors at once.
      *
-     * Pass the value you want to carry forward as the first argument.
-     * On failure, the value is discarded and all errors are returned.
+     * Pass the value to carry forward as the first argument — typically
+     * the original input being validated. On failure, the value is discarded.
      *
      * ```php
-     * return Result::ok($data)
+     * Result::ok($data)
      *     ->flatMap(fn($data) => Result::combine($data,
      *         !empty($data['name'])  ? Result::void() : Result::fail(Error::validation('name',  'Required.')),
      *         !empty($data['email']) ? Result::void() : Result::fail(Error::validation('email', 'Required.')),
      *     ))
-     *     ->map(fn($data) => new User($data['name'], $data['email']));
+     *     ->transform(fn($data) => new User($data['name'], $data['email']));
      * ```
      *
-     * When no value needs to be carried, pass null explicitly:
+     * When no value needs to be carried (standalone validation), pass null:
      * ```php
      * Result::combine(null, $resultA, $resultB);
      * ```
      *
-     * @param  mixed   $value     The value to carry on success.
+     * @param  mixed   $value      The value to carry on success.
      * @param  Result  ...$results
      * @return self
      */
