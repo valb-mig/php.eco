@@ -4,7 +4,7 @@ A lightweight PHP library for handling results and errors without exceptions.
 
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D8.1-777BB4?logo=php&logoColor=white)](https://php.net)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-76%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)]()
 
 ---
@@ -98,14 +98,15 @@ $result->getErrorMessages(); // string[]
 The pipeline has two parallel tracks — the **ok path** and the **fail path**. Each method only runs on its track and leaves the other untouched.
 
 ```
-ok path  ──→  then()  ──→  transform()  ──→  flatMap()  ──→
-fail path ──→  orThen() ──→  otherwise()  ──────────────────→
+ok path   ──→  then()  ──→  ensure()  ──→  transform()  ──→  flatMap()  ──→
+fail path ──→  orThen() ──→  otherwise()  ─────────────────────────────────→
 ```
 
 | Method | Runs when | Alters Result? | Use for |
 |---|---|---|---|
 | `then()` | ok | no | Side-effect with the value |
 | `orThen()` | fail | no | Side-effect with the errors |
+| `ensure()` | ok | yes — fail if condition false | Validate the value inline |
 | `transform()` | ok | yes — new value | Transform the carried value |
 | `flatMap()` | ok | yes — new Result | Chain a Result-returning operation |
 | `otherwise()` | fail | yes — new Result | Recover from failure |
@@ -157,6 +158,40 @@ getUserById(999)
     ->then(fn($user)     => dump('[LOG] continuing with user'))
     ->transform(fn(UserDTO $user) => $user->name)
     ->or('Anonymous');
+```
+
+---
+
+## Ensure
+
+Use `ensure()` to validate the current value against a condition inline, without leaving the pipeline.
+
+Unlike `flatMap`, you only provide the condition and the error — the `Result::ok` on the happy path is handled automatically.
+
+```php
+Result::ok($name)
+    ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
+    ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
+    ->ensure(fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.'))
+    ->transform(fn($v) => StrHandler::sanitize($v));
+```
+
+Short-circuits on the first failure — subsequent `ensure` steps are skipped.
+
+Plain strings are accepted as a shorthand for `Error::generic()`:
+
+```php
+Result::ok($value)
+    ->ensure(fn($v) => $v > 0, 'Must be positive.');
+```
+
+Works with objects too:
+
+```php
+Result::ok($user)
+    ->ensure(fn($user) => $user->isActive(),          Error::generic('User is inactive.'))
+    ->ensure(fn($user) => $user->hasRole('admin'),    Error::make(AppErrorCode::UNAUTHORIZED, 'Access denied.'))
+    ->transform(fn($user) => $user->toArray());
 ```
 
 ---
@@ -298,8 +333,8 @@ class CreateOrderHandler
     {
         return Result::ok($input)
             ->flatMap(fn($input) => Result::combine($input,
-                !empty($input['product_id'])   ? Result::void() : Result::fail(Error::validation('product_id', 'Required.')),
-                ($input['quantity'] ?? 0) > 0  ? Result::void() : Result::fail(Error::validation('quantity',   'Must be greater than 0.')),
+                !empty($input['product_id'])  ? Result::void() : Result::fail(Error::validation('product_id', 'Required.')),
+                ($input['quantity'] ?? 0) > 0 ? Result::void() : Result::fail(Error::validation('quantity',   'Must be greater than 0.')),
             ))
             ->flatMap(fn($input)   => $this->products->find($input['product_id']))
             ->then(fn($product)    => $this->logger->info("Creating order for {$product->name}"))
