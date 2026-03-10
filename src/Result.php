@@ -299,6 +299,36 @@ final class Result
     }
 
     /**
+     * Validates the successful value against a condition.
+     * Returns the same Result unchanged if the condition passes.
+     * Returns a failure with the given error if the condition fails.
+     * Skipped entirely when the Result is already a failure.
+     *
+     * ```php
+     * Result::ok($name)
+     *     ->ensure(fn($name) => !empty($name),        Error::validation('name',  'Required.'))
+     *     ->ensure(fn($name) => strlen($name) <= 100, Error::validation('name',  'Too long.'))
+     *     ->transform(fn($name) => StrHandler::sanitize($name));
+     * ```
+     *
+     * @param  callable(T): bool $condition
+     * @param  Error|string      $error
+     * @return self<T>
+     */
+    public function ensure(callable $condition, Error|string $error): self
+    {
+        if ($this->isFail()) {
+            return $this;
+        }
+
+        if (!$condition($this->value)) {
+            return self::fail($error);
+        }
+
+        return $this;
+    }
+
+    /**
      * Returns the value, or throws a LogicException if the Result is a failure.
      *
      * Use only when you are certain the Result is successful — for instance,
