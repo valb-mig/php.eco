@@ -4,7 +4,7 @@ A lightweight PHP library for handling results and errors without exceptions.
 
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D8.1-777BB4?logo=php&logoColor=white)](https://php.net)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-85%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)]()
 
 ---
@@ -125,7 +125,7 @@ getUserById($id)
 getUserById($id)
     ->transform(fn(UserDTO $user) => $user->name)
     ->transform(fn(string $name)  => mb_strtoupper($name))
-    ->or('ANONYMOUS');
+    ->default('ANONYMOUS');
 ```
 
 ### `flatMap` — chain operations that can also fail
@@ -157,7 +157,7 @@ getUserById(999)
     ->otherwise(fn($errors) => Result::ok(UserDTO::guest()))
     ->then(fn($user)     => dump('[LOG] continuing with user'))
     ->transform(fn(UserDTO $user) => $user->name)
-    ->or('Anonymous');
+    ->default('Anonymous');
 ```
 
 ---
@@ -201,7 +201,7 @@ Result::ok($user)
 | Method | Returns on ok | Returns on fail |
 |---|---|---|
 | `unwrap()` | value | throws `LogicException` |
-| `or($default)` | value | `$default` |
+| `default($default)` | value | `$default` |
 | `unwrapOrHandle($fn)` | value | calls `$fn(errors)`, returns `null` |
 
 ```php
@@ -209,7 +209,7 @@ Result::ok($user)
 $value = $result->unwrap();
 
 // Returns value or a fallback
-$name = $result->or('Anonymous');
+$name = $result->default('Anonymous');
 
 // Delegates failure handling to the caller
 $user = $result->unwrapOrHandle(function (array $errors): void {

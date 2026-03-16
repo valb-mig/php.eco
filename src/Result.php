@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Eco;
 
+use Eco\Exceptions\ResultException;
+
 /**
  * Represents the result of an operation that may fail without throwing an exception.
  *
@@ -35,11 +37,11 @@ namespace Eco;
  * Unwrap overview
  * ----------------------------------------------------------------------------
  *
- *  Method              Returns on ok   Returns on fail
- *  ------------------- --------------- ------------------------------------
- *  unwrap()            value           throws LogicException
- *  or($default)        value           $default
- *  unwrapOrHandle($fn) value           calls $fn(errors), returns null
+ *  Method                  Returns on ok   Returns on fail
+ *  ----------------------- --------------- ------------------------------------
+ *  unwrap()                value           throws ResultException
+ *  default($default)       value           $default
+ *  unwrapOrHandle($fn)     value           calls $fn(errors), returns null
  *
  * @template T The type of the successful value
  */
@@ -64,42 +66,28 @@ final class Result
     /**
      * Creates a successful Result carrying the given value.
      *
-     * Use when the operation produces a meaningful return value.
+     * When called with no arguments, creates a successful Result with no value.
+     * Use this for operations that succeed without producing a meaningful return,
+     * such as deletes, updates, or fire-and-forget actions.
      *
      * ```php
      * return Result::ok($user);
      * return Result::ok(['id' => 1, 'name' => 'Ana']);
+     *
+     * // No value:
+     * function deleteUser(int $id): Result
+     * {
+     *     $this->repo->delete($id);
+     *     return Result::ok();
+     * }
      * ```
      *
      * @param  T $value
      * @return self<T>
      */
-    public static function ok(mixed $value): self
+    public static function ok(mixed $value = null): self
     {
         return new self(true, $value);
-    }
-
-    /**
-     * Creates a successful Result with no value.
-     *
-     * Use for operations that succeed without producing a value,
-     * such as deletes, updates, or fire-and-forget actions.
-     *
-     * ```php
-     * function deleteUser(int $id): Result
-     * {
-     *     $this->repo->delete($id);
-     *     return Result::void();
-     * }
-     * ```
-     *
-     * @return self<null>
-     */
-    public static function void(): self
-    {
-        /** @var self<null> $result */
-        $result = new self(true, null);
-        return $result;
     }
 
     /**
@@ -304,15 +292,18 @@ final class Result
     }
 
     /**
-     * Validates the successful value against a condition.
+     * Validates the successful value against a single condition.
      * Returns the same Result unchanged if the condition passes.
      * Returns a failure with the given error if the condition fails.
      * Skipped entirely when the Result is already a failure.
      *
+     * Use {@see ensureAll()} to evaluate multiple conditions at once,
+     * collecting all errors instead of short-circuiting on the first.
+     *
      * ```php
      * Result::ok($name)
-     *     ->ensure(fn($name) => !empty($name),        Error::validation('name',  'Required.'))
-     *     ->ensure(fn($name) => strlen($name) <= 100, Error::validation('name',  'Too long.'))
+     *     ->ensure(fn($name) => !empty($name),        Error::validation('name', 'Required.'))
+     *     ->ensure(fn($name) => strlen($name) <= 100, Error::validation('name', 'Too long.'))
      *     ->transform(fn($name) => StrHandler::sanitize($name));
      * ```
      *
@@ -334,24 +325,66 @@ final class Result
     }
 
     /**
-     * Returns the value, or throws a LogicException if the Result is a failure.
+     * Validates the successful value against multiple conditions at once,
+     * collecting every error from every failing rule before returning.
+     * Skipped entirely when the Result is already a failure.
+     *
+     * Unlike chained {@see ensure()} calls — which short-circuit on the
+     * first failure — ensureAll() always evaluates every rule, making it
+     * ideal when you want to surface all violations in a single pass.
+     *
+     * Each entry in $rules must be an array with exactly two elements:
+     *  - a callable that receives the value and returns bool
+     *  - an Error or string to use when that condition fails
+     *
+     * ```php
+     * Result::ok($name)
+     *     ->ensureAll([
+     *         [fn($name) => !empty($name),        Error::validation('name', 'Required.')],
+     *         [fn($name) => strlen($name) <= 100, Error::validation('name', 'Too long.')],
+     *         [fn($name) => ctype_alpha($name),   Error::validation('name', 'Letters only.')],
+     *     ])
+     *     ->transform(fn($name) => StrHandler::sanitize($name));
+     * ```
+     *
+     * @param  array<array{callable(T): bool, Error|string}> $rules
+     * @return self<T>
+     */
+    public function ensureAll(array $rules): self
+    {
+        if ($this->isFail()) {
+            return $this;
+        }
+
+        $errors = [];
+
+        foreach ($rules as [$condition, $error]) {
+            if (!$condition($this->value)) {
+                $errors[] = $error instanceof Error ? $error : Error::generic($error);
+            }
+        }
+
+        return empty($errors) ? $this : new self(false, null, $errors);
+    }
+
+    /**
+     * Returns the value, or throws a {@see ResultException} if the Result is a failure.
      *
      * Use only when you are certain the Result is successful — for instance,
      * right after a successful {@see combine()} check. Calling this on a
      * failure is a programming error.
      *
      * ```php
-     * $user = getUserById($id)->unwrap(); // throws if not found
+     * $user = getUserById($id)->unwrap(); // throws ResultException if not found
      * ```
      *
-     * @throws \LogicException
+     * @throws ResultException
      * @return T
      */
     public function unwrap(): mixed
     {
         if ($this->isFail()) {
-            $messages = implode(', ', $this->getErrorMessages());
-            throw new \LogicException("Unwrap failed: {$messages}");
+            throw new ResultException($this->errors);
         }
 
         return $this->value;
@@ -365,13 +398,13 @@ final class Result
      * ```php
      * $name = getUserById($id)
      *     ->transform(fn($user) => $user->name)
-     *     ->or('Anonymous');
+     *     ->default('Anonymous');
      * ```
      *
      * @param  T $default
      * @return T
      */
-    public function or(mixed $default): mixed
+    public function default(mixed $default): mixed
     {
         return $this->isOk() ? $this->value : $default;
     }
@@ -408,7 +441,7 @@ final class Result
 
     /**
      * Returns a ready-made callback for {@see unwrapOrHandle()} that converts
-     * a failed Result into a RuntimeException.
+     * a failed Result into a {@see ResultException}.
      *
      * Useful when you want to re-enter exception-based error handling,
      * for example inside a context that already has a global exception handler.
@@ -422,8 +455,8 @@ final class Result
     public static function throwOnFail(): callable
     {
         return function (array $errors): void {
-            $messages = implode(', ', array_map(fn(Error $e) => $e->message, $errors));
-            throw new \RuntimeException($messages);
+            /** @var Error[] $errors */
+            throw new ResultException($errors);
         };
     }
 
@@ -441,8 +474,8 @@ final class Result
      * ```php
      * Result::ok($data)
      *     ->flatMap(fn($data) => Result::combine($data,
-     *         !empty($data['name'])  ? Result::void() : Result::fail(Error::validation('name',  'Required.')),
-     *         !empty($data['email']) ? Result::void() : Result::fail(Error::validation('email', 'Required.')),
+     *         !empty($data['name'])  ? Result::ok() : Result::fail(Error::validation('name',  'Required.')),
+     *         !empty($data['email']) ? Result::ok() : Result::fail(Error::validation('email', 'Required.')),
      *     ))
      *     ->transform(fn($data) => new User($data['name'], $data['email']));
      * ```
