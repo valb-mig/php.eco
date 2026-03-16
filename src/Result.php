@@ -57,6 +57,7 @@ final class Result
     {
         $this->success = $success;
         $this->value   = $value;
+        /** @var Error[] $errors */
         $this->errors  = $errors;
     }
 
@@ -96,7 +97,9 @@ final class Result
      */
     public static function void(): self
     {
-        return new self(true, null);
+        /** @var self<null> $result */
+        $result = new self(true, null);
+        return $result;
     }
 
     /**
@@ -124,7 +127,9 @@ final class Result
             $errors
         );
 
-        return new self(false, null, $normalized);
+        /** @var self<never> $result */
+        $result = new self(false, null, $normalized);
+        return $result;
     }
 
     /** Returns true when the operation succeeded. */
@@ -417,7 +422,7 @@ final class Result
     public static function throwOnFail(): callable
     {
         return function (array $errors): void {
-            $messages = implode(', ', array_map(fn($e) => $e->message, $errors));
+            $messages = implode(', ', array_map(fn(Error $e) => $e->message, $errors));
             throw new \RuntimeException($messages);
         };
     }
