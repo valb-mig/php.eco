@@ -7,10 +7,15 @@ namespace Eco\Tests;
 use Eco\Error;
 use Eco\Enums\ErrorCode;
 use Eco\Result;
+use Eco\Exceptions\ResultException;
 use PHPUnit\Framework\TestCase;
 
 final class ResultTest extends TestCase
 {
+    // -------------------------------------------------------------------------
+    // ok()
+    // -------------------------------------------------------------------------
+
     public function test_ok_carries_integer(): void
     {
         $result = Result::ok(42);
@@ -37,23 +42,27 @@ final class ResultTest extends TestCase
         $this->assertSame($obj, Result::ok($obj)->unwrap());
     }
 
-    public function test_ok_carries_null(): void
+    public function test_ok_carries_null_explicitly(): void
     {
         $this->assertNull(Result::ok(null)->unwrap());
     }
 
-    public function test_void_is_ok(): void
+    public function test_ok_without_args_is_successful(): void
     {
-        $result = Result::void();
+        $result = Result::ok();
 
         $this->assertTrue($result->isOk());
         $this->assertFalse($result->isFail());
     }
 
-    public function test_void_carries_null(): void
+    public function test_ok_without_args_carries_null(): void
     {
-        $this->assertNull(Result::void()->unwrap());
+        $this->assertNull(Result::ok()->unwrap());
     }
+
+    // -------------------------------------------------------------------------
+    // fail()
+    // -------------------------------------------------------------------------
 
     public function test_fail_with_string_wraps_in_generic_error(): void
     {
@@ -110,6 +119,10 @@ final class ResultTest extends TestCase
         $this->assertSame(['Name required.', 'Email invalid.'], $result->getErrorMessages());
     }
 
+    // -------------------------------------------------------------------------
+    // then()
+    // -------------------------------------------------------------------------
+
     public function test_then_executes_on_success_and_preserves_value(): void
     {
         $captured = null;
@@ -145,6 +158,10 @@ final class ResultTest extends TestCase
         $this->assertSame(['first: value', 'second: value'], $log);
     }
 
+    // -------------------------------------------------------------------------
+    // orThen()
+    // -------------------------------------------------------------------------
+
     public function test_or_then_executes_on_failure_with_errors(): void
     {
         $captured = [];
@@ -173,11 +190,15 @@ final class ResultTest extends TestCase
     public function test_or_then_preserves_the_failure(): void
     {
         $result = Result::fail('error')
-            ->orThen(fn($errors) => null); // side-effect only
+            ->orThen(fn($errors) => null);
 
         $this->assertTrue($result->isFail());
         $this->assertSame(['error'], $result->getErrorMessages());
     }
+
+    // -------------------------------------------------------------------------
+    // transform()
+    // -------------------------------------------------------------------------
 
     public function test_transform_changes_the_value(): void
     {
@@ -217,6 +238,10 @@ final class ResultTest extends TestCase
         $this->assertSame('HELLO', $result->unwrap());
     }
 
+    // -------------------------------------------------------------------------
+    // flatMap()
+    // -------------------------------------------------------------------------
+
     public function test_flat_map_chains_successful_results(): void
     {
         $result = Result::ok(5)
@@ -253,6 +278,10 @@ final class ResultTest extends TestCase
 
         $this->assertFalse($called);
     }
+
+    // -------------------------------------------------------------------------
+    // otherwise()
+    // -------------------------------------------------------------------------
 
     public function test_otherwise_recovers_from_failure(): void
     {
@@ -292,7 +321,7 @@ final class ResultTest extends TestCase
         Result::fail(Error::validation('email', 'Invalid.'))
             ->otherwise(function (array $errors) use (&$captured) {
                 $captured = $errors;
-                return Result::void();
+                return Result::ok();
             });
 
         $this->assertCount(1, $captured);
@@ -309,258 +338,9 @@ final class ResultTest extends TestCase
         $this->assertSame('last resort', $result->unwrap());
     }
 
-    public function test_unwrap_returns_value_on_success(): void
-    {
-        $this->assertSame('ok', Result::ok('ok')->unwrap());
-    }
-
-    public function test_unwrap_throws_logic_exception_on_failure(): void
-    {
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Unwrap failed: Something went wrong');
-
-        Result::fail('Something went wrong')->unwrap();
-    }
-
-    public function test_unwrap_includes_all_messages_when_throwing(): void
-    {
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Name required., Email invalid.');
-
-        Result::fail('Name required.', 'Email invalid.')->unwrap();
-    }
-
-    public function test_or_returns_value_on_success(): void
-    {
-        $this->assertSame('real', Result::ok('real')->or('default'));
-    }
-
-    public function test_or_returns_default_on_failure(): void
-    {
-        $this->assertSame('default', Result::fail('error')->or('default'));
-    }
-
-    public function test_or_returns_null_default(): void
-    {
-        $this->assertNull(Result::fail('error')->or(null));
-    }
-
-    public function test_unwrap_or_handle_returns_value_on_success(): void
-    {
-        $result = Result::ok('value')->unwrapOrHandle(fn($e) => null);
-
-        $this->assertSame('value', $result);
-    }
-
-    public function test_unwrap_or_handle_calls_handler_and_returns_null_on_failure(): void
-    {
-        $captured = [];
-
-        $result = Result::fail(Error::validation('age', 'Must be 18+.'))
-            ->unwrapOrHandle(function (array $errors) use (&$captured) {
-                $captured = $errors;
-            });
-
-        $this->assertNull($result);
-        $this->assertCount(1, $captured);
-        $this->assertSame('Must be 18+.', $captured[0]->message);
-    }
-
-    public function test_throw_on_fail_throws_runtime_exception(): void
-    {
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Something broke');
-
-        Result::fail('Something broke')->unwrapOrHandle(Result::throwOnFail());
-    }
-
-    public function test_throw_on_fail_joins_multiple_messages(): void
-    {
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Error one, Error two');
-
-        Result::fail('Error one', 'Error two')->unwrapOrHandle(Result::throwOnFail());
-    }
-
-    public function test_throw_on_fail_is_skipped_on_success(): void
-    {
-        $value = Result::ok('safe')->unwrapOrHandle(Result::throwOnFail());
-
-        $this->assertSame('safe', $value);
-    }
-
-    public function test_combine_returns_ok_carrying_value_when_all_succeed(): void
-    {
-        $data   = ['name' => 'Ana', 'email' => 'ana@test.com'];
-        $result = Result::combine($data, Result::void(), Result::void());
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame($data, $result->unwrap());
-    }
-
-    public function test_combine_collects_all_errors_without_short_circuiting(): void
-    {
-        $result = Result::combine(null,
-            Result::fail(Error::validation('name',  'Required.')),
-            Result::ok(42),
-            Result::fail(Error::validation('email', 'Invalid.')),
-            Result::fail(Error::validation('age',   'Must be 18+.')),
-        );
-
-        $this->assertTrue($result->isFail());
-        $this->assertCount(3, $result->getErrors());
-        $this->assertSame(
-            ['Required.', 'Invalid.', 'Must be 18+.'],
-            $result->getErrorMessages(),
-        );
-    }
-
-    public function test_combine_evaluates_all_results_even_after_failure(): void
-    {
-        $secondEvaluated = false;
-
-        Result::combine(null,
-            Result::fail('first'),
-            (function () use (&$secondEvaluated) {
-                $secondEvaluated = true;
-                return Result::fail('second');
-            })(),
-        );
-
-        $this->assertTrue($secondEvaluated);
-    }
-
-    public function test_combine_with_null_value_on_success(): void
-    {
-        $result = Result::combine(null, Result::void(), Result::void());
-
-        $this->assertTrue($result->isOk());
-        $this->assertNull($result->unwrap());
-    }
-
-    public function test_combine_carries_value_through_pipeline(): void
-    {
-        $data = ['name' => 'João', 'age' => 25];
-
-        $result = Result::ok($data)
-            ->flatMap(fn($d) => Result::combine($d,
-                !empty($d['name']) ? Result::void() : Result::fail(Error::validation('name', 'Required.')),
-                $d['age'] >= 18    ? Result::void() : Result::fail(Error::validation('age',  'Must be 18+.')),
-            ))
-            ->transform(fn($d) => mb_strtoupper($d['name']));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('JOÃO', $result->unwrap());
-    }
-
-    public function test_then_and_or_then_are_mutually_exclusive(): void
-    {
-        $thenCalled   = false;
-        $orThenCalled = false;
-
-        Result::ok('value')
-            ->then(function () use (&$thenCalled)   { $thenCalled   = true; })
-            ->orThen(function () use (&$orThenCalled) { $orThenCalled = true; });
-
-        $this->assertTrue($thenCalled);
-        $this->assertFalse($orThenCalled);
-
-        $thenCalled   = false;
-        $orThenCalled = false;
-
-        Result::fail('error')
-            ->then(function () use (&$thenCalled)   { $thenCalled   = true; })
-            ->orThen(function () use (&$orThenCalled) { $orThenCalled = true; });
-
-        $this->assertFalse($thenCalled);
-        $this->assertTrue($orThenCalled);
-    }
-
-    public function test_transform_and_otherwise_are_mutually_exclusive(): void
-    {
-        $transformCalled  = false;
-        $otherwiseCalled  = false;
-
-        Result::ok('value')
-            ->transform(function ($v) use (&$transformCalled)  { $transformCalled  = true; return $v; })
-            ->otherwise(function ($e) use (&$otherwiseCalled)  { $otherwiseCalled  = true; return Result::void(); });
-
-        $this->assertTrue($transformCalled);
-        $this->assertFalse($otherwiseCalled);
-
-        $transformCalled  = false;
-        $otherwiseCalled  = false;
-
-        Result::fail('error')
-            ->transform(function ($v) use (&$transformCalled)  { $transformCalled  = true; return $v; })
-            ->otherwise(function ($e) use (&$otherwiseCalled)  { $otherwiseCalled  = true; return Result::void(); });
-
-        $this->assertFalse($transformCalled);
-        $this->assertTrue($otherwiseCalled);
-    }
-
-    public function test_full_pipeline_success(): void
-    {
-        $result = Result::ok(['name' => 'Maria', 'email' => 'maria@test.com', 'age' => 30])
-            ->flatMap(fn($d) => Result::combine($d,
-                !empty($d['name'])             ? Result::void() : Result::fail(Error::validation('name',  'Required.')),
-                str_contains($d['email'], '@') ? Result::void() : Result::fail(Error::validation('email', 'Invalid.')),
-                $d['age'] >= 18                ? Result::void() : Result::fail(Error::validation('age',   'Must be 18+.')),
-            ))
-            ->then(fn($d)    => null /* log */)
-            ->transform(fn($d) => ['id' => 1, 'name' => $d['name'], 'email' => $d['email']]);
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('Maria', $result->unwrap()['name']);
-    }
-
-    public function test_full_pipeline_failure_collects_all_errors(): void
-    {
-        $result = Result::ok(['name' => '', 'email' => 'invalid', 'age' => 15])
-            ->flatMap(fn($d) => Result::combine($d,
-                !empty($d['name'])             ? Result::void() : Result::fail(Error::validation('name',  'Required.')),
-                str_contains($d['email'], '@') ? Result::void() : Result::fail(Error::validation('email', 'Invalid.')),
-                $d['age'] >= 18                ? Result::void() : Result::fail(Error::validation('age',   'Must be 18+.')),
-            ))
-            ->transform(fn($d) => ['id' => 1, 'name' => $d['name']]);
-
-        $this->assertTrue($result->isFail());
-        $this->assertCount(3, $result->getErrors());
-    }
-
-    public function test_pipeline_with_otherwise_recovery(): void
-    {
-        $log = [];
-
-        $result = Result::fail('primary source failed')
-            ->orThen(function($errors) use (&$log) {
-                $log[] = 'logged: ' . $errors[0]->message;
-            })
-            ->otherwise(fn($errors) => Result::fail('secondary also failed'))
-            ->otherwise(fn($errors) => Result::ok('fallback'))
-            ->transform(fn($v)    => mb_strtoupper($v));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('FALLBACK', $result->unwrap());
-        $this->assertSame(['logged: primary source failed'], $log);
-    }
-
-    public function test_pipeline_unwrap_or_handle_with_exit_simulation(): void
-    {
-        $handlerCalled = false;
-        $errors        = [];
-
-        $result = Result::fail(Error::validation('email', 'Invalid.'))
-            ->unwrapOrHandle(function (array $e) use (&$handlerCalled, &$errors) {
-                $handlerCalled = true;
-                $errors        = $e;
-                // in real code: http_response_code(422); exit;
-            });
-
-        $this->assertNull($result);
-        $this->assertTrue($handlerCalled);
-        $this->assertSame('Invalid.', $errors[0]->message);
-    }
+    // -------------------------------------------------------------------------
+    // ensure()
+    // -------------------------------------------------------------------------
 
     public function test_ensure_passes_when_condition_is_true(): void
     {
@@ -611,23 +391,12 @@ final class ResultTest extends TestCase
         $this->assertSame(['already failed'], $result->getErrorMessages());
     }
 
-    public function test_ensure_is_chainable(): void
-    {
-        $result = Result::ok('Ana')
-            ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
-            ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
-            ->ensure(fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.'));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('Ana', $result->unwrap());
-    }
-
-    public function test_ensure_stops_at_first_failure_in_chain(): void
+    public function test_ensure_is_chainable_and_short_circuits(): void
     {
         $thirdCalled = false;
 
         $result = Result::ok('')
-            ->ensure(fn($v) => !empty($v),      Error::validation('name', 'Required.'))
+            ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
             ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
             ->ensure(function ($v) use (&$thirdCalled) {
                 $thirdCalled = true;
@@ -636,6 +405,17 @@ final class ResultTest extends TestCase
 
         $this->assertFalse($thirdCalled);
         $this->assertSame(['Required.'], $result->getErrorMessages());
+    }
+
+    public function test_ensure_passes_all_rules_in_chain(): void
+    {
+        $result = Result::ok('Ana')
+            ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
+            ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
+            ->ensure(fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.'));
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('Ana', $result->unwrap());
     }
 
     public function test_ensure_works_with_transform(): void
@@ -649,7 +429,7 @@ final class ResultTest extends TestCase
 
     public function test_ensure_works_with_objects(): void
     {
-        $user = new \stdClass();
+        $user         = new \stdClass();
         $user->active = true;
 
         $result = Result::ok($user)
@@ -657,5 +437,456 @@ final class ResultTest extends TestCase
 
         $this->assertTrue($result->isOk());
         $this->assertSame($user, $result->unwrap());
+    }
+
+    // -------------------------------------------------------------------------
+    // ensureAll()
+    // -------------------------------------------------------------------------
+
+    public function test_ensure_all_passes_when_all_conditions_are_true(): void
+    {
+        $result = Result::ok('Ana')
+            ->ensureAll([
+                [fn($v) => !empty($v),        Error::validation('name', 'Required.')],
+                [fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.')],
+                [fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.')],
+            ]);
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('Ana', $result->unwrap());
+    }
+
+    public function test_ensure_all_collects_all_failing_errors(): void
+    {
+        $result = Result::ok('')
+            ->ensureAll([
+                [fn($v) => !empty($v),        Error::validation('name', 'Required.')],
+                [fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.')],
+                [fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.')],
+            ]);
+
+        $this->assertTrue($result->isFail());
+        $this->assertCount(2, $result->getErrors());
+        $this->assertSame(['Required.', 'Letters only.'], $result->getErrorMessages());
+    }
+
+    public function test_ensure_all_evaluates_every_rule_without_short_circuiting(): void
+    {
+        $evaluated = [];
+
+        Result::ok('x1!')
+            ->ensureAll([
+                [function ($v) use (&$evaluated) { $evaluated[] = 'rule1'; return ctype_alpha($v); }, 'Letters only.'],
+                [function ($v) use (&$evaluated) { $evaluated[] = 'rule2'; return strlen($v) <= 2; }, 'Too long.'],
+                [function ($v) use (&$evaluated) { $evaluated[] = 'rule3'; return !str_contains($v, '!'); }, 'No special chars.'],
+            ]);
+
+        $this->assertSame(['rule1', 'rule2', 'rule3'], $evaluated);
+    }
+
+    public function test_ensure_all_accepts_plain_string_errors(): void
+    {
+        $result = Result::ok('')
+            ->ensureAll([
+                [fn($v) => !empty($v),    'Required.'],
+                [fn($v) => strlen($v) > 2, 'Too short.'],
+            ]);
+
+        $this->assertSame(['Required.', 'Too short.'], $result->getErrorMessages());
+    }
+
+    public function test_ensure_all_is_skipped_on_failure(): void
+    {
+        $called = false;
+
+        $result = Result::fail('already failed')
+            ->ensureAll([
+                [function ($v) use (&$called) { $called = true; return true; }, 'irrelevant'],
+            ]);
+
+        $this->assertFalse($called);
+        $this->assertSame(['already failed'], $result->getErrorMessages());
+    }
+
+    public function test_ensure_all_works_with_transform(): void
+    {
+        $result = Result::ok('ana')
+            ->ensureAll([
+                [fn($v) => !empty($v),      Error::validation('name', 'Required.')],
+                [fn($v) => ctype_alpha($v), Error::validation('name', 'Letters only.')],
+            ])
+            ->transform(fn($v) => mb_strtoupper($v));
+
+        $this->assertSame('ANA', $result->unwrap());
+    }
+
+    // -------------------------------------------------------------------------
+    // unwrap()
+    // -------------------------------------------------------------------------
+
+    public function test_unwrap_returns_value_on_success(): void
+    {
+        $this->assertSame('ok', Result::ok('ok')->unwrap());
+    }
+
+    public function test_unwrap_throws_result_exception_on_failure(): void
+    {
+        $this->expectException(ResultException::class);
+        $this->expectExceptionMessage('Something went wrong');
+
+        Result::fail('Something went wrong')->unwrap();
+    }
+
+    public function test_unwrap_includes_all_messages_when_throwing(): void
+    {
+        $this->expectException(ResultException::class);
+        $this->expectExceptionMessage('Name required., Email invalid.');
+
+        Result::fail('Name required.', 'Email invalid.')->unwrap();
+    }
+
+    public function test_unwrap_exception_exposes_errors(): void
+    {
+        try {
+            Result::fail(
+                Error::validation('name',  'Required.'),
+                Error::validation('email', 'Invalid.'),
+            )->unwrap();
+
+            $this->fail('Expected ResultException was not thrown.');
+        } catch (ResultException $e) {
+            $this->assertCount(2, $e->getErrors());
+            $this->assertSame('Required.', $e->getErrors()[0]->message);
+            $this->assertSame('Invalid.',  $e->getErrors()[1]->message);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // default()
+    // -------------------------------------------------------------------------
+
+    public function test_default_returns_value_on_success(): void
+    {
+        $this->assertSame('real', Result::ok('real')->default('fallback'));
+    }
+
+    public function test_default_returns_fallback_on_failure(): void
+    {
+        $this->assertSame('fallback', Result::fail('error')->default('fallback'));
+    }
+
+    public function test_default_returns_null_fallback(): void
+    {
+        $this->assertNull(Result::fail('error')->default(null));
+    }
+
+    // -------------------------------------------------------------------------
+    // unwrapOrHandle()
+    // -------------------------------------------------------------------------
+
+    public function test_unwrap_or_handle_returns_value_on_success(): void
+    {
+        $result = Result::ok('value')->unwrapOrHandle(fn($e) => null);
+
+        $this->assertSame('value', $result);
+    }
+
+    public function test_unwrap_or_handle_calls_handler_and_returns_null_on_failure(): void
+    {
+        $captured = [];
+
+        $result = Result::fail(Error::validation('age', 'Must be 18+.'))
+            ->unwrapOrHandle(function (array $errors) use (&$captured) {
+                $captured = $errors;
+            });
+
+        $this->assertNull($result);
+        $this->assertCount(1, $captured);
+        $this->assertSame('Must be 18+.', $captured[0]->message);
+    }
+
+    // -------------------------------------------------------------------------
+    // throwOnFail()
+    // -------------------------------------------------------------------------
+
+    public function test_throw_on_fail_throws_result_exception(): void
+    {
+        $this->expectException(ResultException::class);
+        $this->expectExceptionMessage('Something broke');
+
+        Result::fail('Something broke')->unwrapOrHandle(Result::throwOnFail());
+    }
+
+    public function test_throw_on_fail_joins_multiple_messages(): void
+    {
+        $this->expectException(ResultException::class);
+        $this->expectExceptionMessage('Error one, Error two');
+
+        Result::fail('Error one', 'Error two')->unwrapOrHandle(Result::throwOnFail());
+    }
+
+    public function test_throw_on_fail_is_skipped_on_success(): void
+    {
+        $value = Result::ok('safe')->unwrapOrHandle(Result::throwOnFail());
+
+        $this->assertSame('safe', $value);
+    }
+
+    public function test_throw_on_fail_exception_exposes_errors(): void
+    {
+        try {
+            Result::fail(Error::validation('email', 'Invalid.'))
+                ->unwrapOrHandle(Result::throwOnFail());
+
+            $this->fail('Expected ResultException was not thrown.');
+        } catch (ResultException $e) {
+            $this->assertCount(1, $e->getErrors());
+            $this->assertSame('Invalid.', $e->getErrors()[0]->message);
+        }
+    }
+
+    public function test_unwrap_and_throw_on_fail_throw_same_exception_type(): void
+    {
+        $fromUnwrap = null;
+        $fromHandle = null;
+
+        try {
+            Result::fail('error')->unwrap();
+        } catch (ResultException $e) {
+            $fromUnwrap = $e;
+        }
+
+        try {
+            Result::fail('error')->unwrapOrHandle(Result::throwOnFail());
+        } catch (ResultException $e) {
+            $fromHandle = $e;
+        }
+
+        $this->assertInstanceOf(ResultException::class, $fromUnwrap);
+        $this->assertInstanceOf(ResultException::class, $fromHandle);
+    }
+
+    // -------------------------------------------------------------------------
+    // combine()
+    // -------------------------------------------------------------------------
+
+    public function test_combine_returns_ok_carrying_value_when_all_succeed(): void
+    {
+        $data   = ['name' => 'Ana', 'email' => 'ana@test.com'];
+        $result = Result::combine($data, Result::ok(), Result::ok());
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame($data, $result->unwrap());
+    }
+
+    public function test_combine_collects_all_errors_without_short_circuiting(): void
+    {
+        $result = Result::combine(null,
+            Result::fail(Error::validation('name',  'Required.')),
+            Result::ok(42),
+            Result::fail(Error::validation('email', 'Invalid.')),
+            Result::fail(Error::validation('age',   'Must be 18+.')),
+        );
+
+        $this->assertTrue($result->isFail());
+        $this->assertCount(3, $result->getErrors());
+        $this->assertSame(
+            ['Required.', 'Invalid.', 'Must be 18+.'],
+            $result->getErrorMessages(),
+        );
+    }
+
+    public function test_combine_evaluates_all_results_even_after_failure(): void
+    {
+        $secondEvaluated = false;
+
+        Result::combine(null,
+            Result::fail('first'),
+            (function () use (&$secondEvaluated) {
+                $secondEvaluated = true;
+                return Result::fail('second');
+            })(),
+        );
+
+        $this->assertTrue($secondEvaluated);
+    }
+
+    public function test_combine_with_null_value_on_success(): void
+    {
+        $result = Result::combine(null, Result::ok(), Result::ok());
+
+        $this->assertTrue($result->isOk());
+        $this->assertNull($result->unwrap());
+    }
+
+    public function test_combine_carries_value_through_pipeline(): void
+    {
+        $data = ['name' => 'João', 'age' => 25];
+
+        $result = Result::ok($data)
+            ->flatMap(fn($d) => Result::combine($d,
+                !empty($d['name']) ? Result::ok() : Result::fail(Error::validation('name', 'Required.')),
+                $d['age'] >= 18    ? Result::ok() : Result::fail(Error::validation('age',  'Must be 18+.')),
+            ))
+            ->transform(fn($d) => mb_strtoupper($d['name']));
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('JOÃO', $result->unwrap());
+    }
+
+    // -------------------------------------------------------------------------
+    // Symmetry contracts
+    // -------------------------------------------------------------------------
+
+    public function test_then_and_or_then_are_mutually_exclusive(): void
+    {
+        $thenCalled   = false;
+        $orThenCalled = false;
+
+        Result::ok('value')
+            ->then(function () use (&$thenCalled)    { $thenCalled   = true; })
+            ->orThen(function () use (&$orThenCalled) { $orThenCalled = true; });
+
+        $this->assertTrue($thenCalled);
+        $this->assertFalse($orThenCalled);
+
+        $thenCalled   = false;
+        $orThenCalled = false;
+
+        Result::fail('error')
+            ->then(function () use (&$thenCalled)    { $thenCalled   = true; })
+            ->orThen(function () use (&$orThenCalled) { $orThenCalled = true; });
+
+        $this->assertFalse($thenCalled);
+        $this->assertTrue($orThenCalled);
+    }
+
+    public function test_transform_and_otherwise_are_mutually_exclusive(): void
+    {
+        $transformCalled = false;
+        $otherwiseCalled = false;
+
+        Result::ok('value')
+            ->transform(function ($v) use (&$transformCalled) { $transformCalled = true; return $v; })
+            ->otherwise(function ($e) use (&$otherwiseCalled) { $otherwiseCalled = true; return Result::ok(); });
+
+        $this->assertTrue($transformCalled);
+        $this->assertFalse($otherwiseCalled);
+
+        $transformCalled = false;
+        $otherwiseCalled = false;
+
+        Result::fail('error')
+            ->transform(function ($v) use (&$transformCalled) { $transformCalled = true; return $v; })
+            ->otherwise(function ($e) use (&$otherwiseCalled) { $otherwiseCalled = true; return Result::ok(); });
+
+        $this->assertFalse($transformCalled);
+        $this->assertTrue($otherwiseCalled);
+    }
+
+    public function test_flat_map_and_otherwise_are_mutually_exclusive(): void
+    {
+        $flatMapCalled   = false;
+        $otherwiseCalled = false;
+
+        Result::ok('value')
+            ->flatMap(function ($v) use (&$flatMapCalled)    { $flatMapCalled   = true; return Result::ok($v); })
+            ->otherwise(function ($e) use (&$otherwiseCalled) { $otherwiseCalled = true; return Result::ok(); });
+
+        $this->assertTrue($flatMapCalled);
+        $this->assertFalse($otherwiseCalled);
+
+        $flatMapCalled   = false;
+        $otherwiseCalled = false;
+
+        Result::fail('error')
+            ->flatMap(function ($v) use (&$flatMapCalled)    { $flatMapCalled   = true; return Result::ok($v); })
+            ->otherwise(function ($e) use (&$otherwiseCalled) { $otherwiseCalled = true; return Result::ok(); });
+
+        $this->assertFalse($flatMapCalled);
+        $this->assertTrue($otherwiseCalled);
+    }
+
+    // -------------------------------------------------------------------------
+    // Full pipeline integration
+    // -------------------------------------------------------------------------
+
+    public function test_full_pipeline_success(): void
+    {
+        $result = Result::ok(['name' => 'Maria', 'email' => 'maria@test.com', 'age' => 30])
+            ->flatMap(fn($d) => Result::combine($d,
+                !empty($d['name'])             ? Result::ok() : Result::fail(Error::validation('name',  'Required.')),
+                str_contains($d['email'], '@') ? Result::ok() : Result::fail(Error::validation('email', 'Invalid.')),
+                $d['age'] >= 18                ? Result::ok() : Result::fail(Error::validation('age',   'Must be 18+.')),
+            ))
+            ->then(fn($d)      => null /* log */)
+            ->transform(fn($d) => ['id' => 1, 'name' => $d['name'], 'email' => $d['email']]);
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('Maria', $result->unwrap()['name']);
+    }
+
+    public function test_full_pipeline_failure_collects_all_errors(): void
+    {
+        $result = Result::ok(['name' => '', 'email' => 'invalid', 'age' => 15])
+            ->flatMap(fn($d) => Result::combine($d,
+                !empty($d['name'])             ? Result::ok() : Result::fail(Error::validation('name',  'Required.')),
+                str_contains($d['email'], '@') ? Result::ok() : Result::fail(Error::validation('email', 'Invalid.')),
+                $d['age'] >= 18                ? Result::ok() : Result::fail(Error::validation('age',   'Must be 18+.')),
+            ))
+            ->transform(fn($d) => ['id' => 1, 'name' => $d['name']]);
+
+        $this->assertTrue($result->isFail());
+        $this->assertCount(3, $result->getErrors());
+    }
+
+    public function test_pipeline_with_otherwise_recovery(): void
+    {
+        $log = [];
+
+        $result = Result::fail('primary source failed')
+            ->orThen(function ($errors) use (&$log) {
+                $log[] = 'logged: ' . $errors[0]->message;
+            })
+            ->otherwise(fn($errors) => Result::fail('secondary also failed'))
+            ->otherwise(fn($errors) => Result::ok('fallback'))
+            ->transform(fn($v)      => mb_strtoupper($v));
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('FALLBACK', $result->unwrap());
+        $this->assertSame(['logged: primary source failed'], $log);
+    }
+
+    public function test_pipeline_unwrap_or_handle_with_exit_simulation(): void
+    {
+        $handlerCalled = false;
+        $errors        = [];
+
+        $result = Result::fail(Error::validation('email', 'Invalid.'))
+            ->unwrapOrHandle(function (array $e) use (&$handlerCalled, &$errors) {
+                $handlerCalled = true;
+                $errors        = $e;
+                // in real code: http_response_code(422); exit;
+            });
+
+        $this->assertNull($result);
+        $this->assertTrue($handlerCalled);
+        $this->assertSame('Invalid.', $errors[0]->message);
+    }
+
+    public function test_ensure_all_integrates_with_full_pipeline(): void
+    {
+        $result = Result::ok(['name' => 'Maria', 'age' => 25])
+            ->flatMap(fn($d) => Result::ok($d['name'])
+                ->ensureAll([
+                    [fn($v) => !empty($v),      Error::validation('name', 'Required.')],
+                    [fn($v) => ctype_alpha($v),  Error::validation('name', 'Letters only.')],
+                    [fn($v) => strlen($v) <= 50, Error::validation('name', 'Too long.')],
+                ])
+                ->transform(fn($v) => array_merge($d, ['name' => mb_strtoupper($v)]))
+            );
+
+        $this->assertTrue($result->isOk());
+        $this->assertSame('MARIA', $result->unwrap()['name']);
     }
 }
