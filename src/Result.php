@@ -292,45 +292,11 @@ final class Result
     }
 
     /**
-     * Validates the successful value against a single condition.
-     * Returns the same Result unchanged if the condition passes.
-     * Returns a failure with the given error if the condition fails.
-     * Skipped entirely when the Result is already a failure.
-     *
-     * Use {@see ensureAll()} to evaluate multiple conditions at once,
-     * collecting all errors instead of short-circuiting on the first.
-     *
-     * ```php
-     * Result::ok($name)
-     *     ->ensure(fn($name) => !empty($name),        Error::validation('name', 'Required.'))
-     *     ->ensure(fn($name) => strlen($name) <= 100, Error::validation('name', 'Too long.'))
-     *     ->transform(fn($name) => StrHandler::sanitize($name));
-     * ```
-     *
-     * @param  callable(T): bool $condition
-     * @param  Error|string      $error
-     * @return self<T>
-     */
-    public function ensure(callable $condition, Error|string $error): self
-    {
-        if ($this->isFail()) {
-            return $this;
-        }
-
-        if (!$condition($this->value)) {
-            return self::fail($error);
-        }
-
-        return $this;
-    }
-
-    /**
      * Validates the successful value against multiple conditions at once,
      * collecting every error from every failing rule before returning.
      * Skipped entirely when the Result is already a failure.
      *
-     * Unlike chained {@see ensure()} calls — which short-circuit on the
-     * first failure — ensureAll() always evaluates every rule, making it
+     * The first failure — ensure() always evaluates every rule, making it
      * ideal when you want to surface all violations in a single pass.
      *
      * Each entry in $rules must be an array with exactly two elements:
@@ -339,7 +305,7 @@ final class Result
      *
      * ```php
      * Result::ok($name)
-     *     ->ensureAll([
+     *     ->ensure([
      *         [fn($name) => !empty($name),        Error::validation('name', 'Required.')],
      *         [fn($name) => strlen($name) <= 100, Error::validation('name', 'Too long.')],
      *         [fn($name) => ctype_alpha($name),   Error::validation('name', 'Letters only.')],
@@ -350,7 +316,7 @@ final class Result
      * @param  array<array{callable(T): bool, Error|string}> $rules
      * @return self<T>
      */
-    public function ensureAll(array $rules): self
+    public function ensure(array $rules): self
     {
         if ($this->isFail()) {
             return $this;

@@ -342,111 +342,10 @@ final class ResultTest extends TestCase
     // ensure()
     // -------------------------------------------------------------------------
 
-    public function test_ensure_passes_when_condition_is_true(): void
-    {
-        $result = Result::ok('Ana')
-            ->ensure(fn($v) => !empty($v), Error::validation('name', 'Required.'));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('Ana', $result->unwrap());
-    }
-
-    public function test_ensure_fails_when_condition_is_false(): void
-    {
-        $result = Result::ok('')
-            ->ensure(fn($v) => !empty($v), Error::validation('name', 'Required.'));
-
-        $this->assertTrue($result->isFail());
-        $this->assertSame('Required.', $result->getErrors()[0]->message);
-    }
-
-    public function test_ensure_preserves_field_from_error(): void
-    {
-        $result = Result::ok('')
-            ->ensure(fn($v) => !empty($v), Error::validation('name', 'Required.'));
-
-        $this->assertSame('name', $result->getErrors()[0]->field);
-    }
-
-    public function test_ensure_accepts_plain_string_error(): void
-    {
-        $result = Result::ok('')
-            ->ensure(fn($v) => !empty($v), 'Value cannot be empty.');
-
-        $this->assertTrue($result->isFail());
-        $this->assertSame('Value cannot be empty.', $result->getErrors()[0]->message);
-    }
-
-    public function test_ensure_is_skipped_on_failure(): void
-    {
-        $called = false;
-
-        $result = Result::fail('already failed')
-            ->ensure(function ($v) use (&$called) {
-                $called = true;
-                return !empty($v);
-            }, 'Required.');
-
-        $this->assertFalse($called);
-        $this->assertSame(['already failed'], $result->getErrorMessages());
-    }
-
-    public function test_ensure_is_chainable_and_short_circuits(): void
-    {
-        $thirdCalled = false;
-
-        $result = Result::ok('')
-            ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
-            ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
-            ->ensure(function ($v) use (&$thirdCalled) {
-                $thirdCalled = true;
-                return ctype_alpha($v);
-            }, Error::validation('name', 'Letters only.'));
-
-        $this->assertFalse($thirdCalled);
-        $this->assertSame(['Required.'], $result->getErrorMessages());
-    }
-
-    public function test_ensure_passes_all_rules_in_chain(): void
-    {
-        $result = Result::ok('Ana')
-            ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
-            ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
-            ->ensure(fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.'));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame('Ana', $result->unwrap());
-    }
-
-    public function test_ensure_works_with_transform(): void
-    {
-        $result = Result::ok('  Ana  ')
-            ->ensure(fn($v) => !empty(trim($v)), Error::validation('name', 'Required.'))
-            ->transform(fn($v) => trim($v));
-
-        $this->assertSame('Ana', $result->unwrap());
-    }
-
-    public function test_ensure_works_with_objects(): void
-    {
-        $user         = new \stdClass();
-        $user->active = true;
-
-        $result = Result::ok($user)
-            ->ensure(fn($u) => $u->active, Error::generic('User is inactive.'));
-
-        $this->assertTrue($result->isOk());
-        $this->assertSame($user, $result->unwrap());
-    }
-
-    // -------------------------------------------------------------------------
-    // ensureAll()
-    // -------------------------------------------------------------------------
-
     public function test_ensure_all_passes_when_all_conditions_are_true(): void
     {
         $result = Result::ok('Ana')
-            ->ensureAll([
+            ->ensure([
                 [fn($v) => !empty($v),        Error::validation('name', 'Required.')],
                 [fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.')],
                 [fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.')],
@@ -459,7 +358,7 @@ final class ResultTest extends TestCase
     public function test_ensure_all_collects_all_failing_errors(): void
     {
         $result = Result::ok('')
-            ->ensureAll([
+            ->ensure([
                 [fn($v) => !empty($v),        Error::validation('name', 'Required.')],
                 [fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.')],
                 [fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.')],
@@ -475,7 +374,7 @@ final class ResultTest extends TestCase
         $evaluated = [];
 
         Result::ok('x1!')
-            ->ensureAll([
+            ->ensure([
                 [function ($v) use (&$evaluated) { $evaluated[] = 'rule1'; return ctype_alpha($v); }, 'Letters only.'],
                 [function ($v) use (&$evaluated) { $evaluated[] = 'rule2'; return strlen($v) <= 2; }, 'Too long.'],
                 [function ($v) use (&$evaluated) { $evaluated[] = 'rule3'; return !str_contains($v, '!'); }, 'No special chars.'],
@@ -487,7 +386,7 @@ final class ResultTest extends TestCase
     public function test_ensure_all_accepts_plain_string_errors(): void
     {
         $result = Result::ok('')
-            ->ensureAll([
+            ->ensure([
                 [fn($v) => !empty($v),    'Required.'],
                 [fn($v) => strlen($v) > 2, 'Too short.'],
             ]);
@@ -500,7 +399,7 @@ final class ResultTest extends TestCase
         $called = false;
 
         $result = Result::fail('already failed')
-            ->ensureAll([
+            ->ensure([
                 [function ($v) use (&$called) { $called = true; return true; }, 'irrelevant'],
             ]);
 
@@ -511,7 +410,7 @@ final class ResultTest extends TestCase
     public function test_ensure_all_works_with_transform(): void
     {
         $result = Result::ok('ana')
-            ->ensureAll([
+            ->ensure([
                 [fn($v) => !empty($v),      Error::validation('name', 'Required.')],
                 [fn($v) => ctype_alpha($v), Error::validation('name', 'Letters only.')],
             ])
@@ -878,7 +777,7 @@ final class ResultTest extends TestCase
     {
         $result = Result::ok(['name' => 'Maria', 'age' => 25])
             ->flatMap(fn($d) => Result::ok($d['name'])
-                ->ensureAll([
+                ->ensure([
                     [fn($v) => !empty($v),      Error::validation('name', 'Required.')],
                     [fn($v) => ctype_alpha($v),  Error::validation('name', 'Letters only.')],
                     [fn($v) => strlen($v) <= 50, Error::validation('name', 'Too long.')],
