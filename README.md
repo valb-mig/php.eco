@@ -4,7 +4,7 @@ A lightweight PHP library for handling results and errors without exceptions.
 
 [![PHP](https://img.shields.io/badge/PHP-%3E%3D8.1-777BB4?logo=php&logoColor=white)](https://php.net)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-96%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-87%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)]()
 
 ---
@@ -98,7 +98,7 @@ $result->getErrorMessages(); // string[]
 The pipeline has two parallel tracks — the **ok path** and the **fail path**. Each method only runs on its track and leaves the other untouched.
 
 ```
-ok path   ──→  then()  ──→  ensure()  ──→  transform()  ──→  flatMap()  ──→
+ok path   ──→  then()  ──→  transform()  ──→  flatMap()  ──→
 fail path ──→  orThen() ──→  otherwise()  ─────────────────────────────────→
 ```
 
@@ -106,7 +106,6 @@ fail path ──→  orThen() ──→  otherwise()  ────────�
 |---|---|---|---|
 | `then()` | ok | no | Side-effect with the value |
 | `orThen()` | fail | no | Side-effect with the errors |
-| `ensure()` | ok | yes — fail if condition false | Validate the value inline |
 | `transform()` | ok | yes — new value | Transform the carried value |
 | `flatMap()` | ok | yes — new Result | Chain a Result-returning operation |
 | `otherwise()` | fail | yes — new Result | Recover from failure |
@@ -164,35 +163,43 @@ getUserById(999)
 
 ## Ensure
 
-Use `ensure()` to validate the current value against a condition inline, without leaving the pipeline.
+Use `ensure()` to validate the current value against **multiple conditions at once**, collecting every error from every failing rule before returning.
+Unlike short-circuiting approaches, `ensure()` always evaluates all rules — ideal when you want to surface all violations in a single pass.
 
-Unlike `flatMap`, you only provide the condition and the error — the `Result::ok` on the happy path is handled automatically.
+Each entry in `$rules` must be a two-element array: a callable condition and an `Error` or string for when it fails.
 
 ```php
 Result::ok($name)
-    ->ensure(fn($v) => !empty($v),        Error::validation('name', 'Required.'))
-    ->ensure(fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.'))
-    ->ensure(fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.'))
+    ->ensure([
+        [fn($v) => !empty($v),        Error::validation('name', 'Required.')],
+        [fn($v) => strlen($v) <= 100, Error::validation('name', 'Too long.')],
+        [fn($v) => ctype_alpha($v),   Error::validation('name', 'Letters only.')],
+    ])
     ->transform(fn($v) => StrHandler::sanitize($v));
 ```
-
-Short-circuits on the first failure — subsequent `ensure` steps are skipped.
 
 Plain strings are accepted as a shorthand for `Error::generic()`:
 
 ```php
 Result::ok($value)
-    ->ensure(fn($v) => $v > 0, 'Must be positive.');
+    ->ensure([
+        [fn($v) => $v > 0,    'Must be positive.'],
+        [fn($v) => $v < 1000, 'Must be less than 1000.'],
+    ]);
 ```
 
 Works with objects too:
 
 ```php
 Result::ok($user)
-    ->ensure(fn($user) => $user->isActive(),          Error::generic('User is inactive.'))
-    ->ensure(fn($user) => $user->hasRole('admin'),    Error::make(AppErrorCode::UNAUTHORIZED, 'Access denied.'))
+    ->ensure([
+        [fn($user) => $user->isActive(),       Error::generic('User is inactive.')],
+        [fn($user) => $user->hasRole('admin'), Error::make(AppErrorCode::UNAUTHORIZED, 'Access denied.')],
+    ])
     ->transform(fn($user) => $user->toArray());
 ```
+
+Skipped entirely when the Result is already a failure.
 
 ---
 
